@@ -1,0 +1,9 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+data/
+outputs/
+risk_scoreold.py
+test.py
+testmissing.py
