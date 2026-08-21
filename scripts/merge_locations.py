@@ -8,17 +8,16 @@ Run:
 python scripts/merge_locations.py
 """
 
-from pathlib import Path
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+from project_paths import OUTPUTS_DIR, DATA_DIR
 import pandas as pd
 import reverse_geocoder as rg
 
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-HAZARD_FILE = BASE_DIR / "outputs" / "hazard_export.csv"
-SITES_FILE = BASE_DIR / "data" / "sites_input.csv"
-
-OUTPUT_FILE = BASE_DIR / "outputs" / "sites_with_cities.csv"
+HAZARD_FILE = OUTPUTS_DIR / "hazard_export.csv"
+SITES_FILE = DATA_DIR / "sites_input.csv"
+OUTPUT_FILE = OUTPUTS_DIR / "sites_with_cities.csv"
 
 
 def main():

@@ -5,15 +5,18 @@ risk_score.py) and presents four pages: Executive Summary, Interactive
 Map, Portfolio Explorer, Analytics.
 """
 
+import sys, pathlib
+# Ensure repo root is on sys.path so project_paths can be imported when Streamlit runs
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import folium
 from streamlit_folium import st_folium
-from pathlib import Path
+from project_paths import SITES_FILE
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_FILE = BASE_DIR / "outputs" / "sites_scored.csv"
+DATA_FILE = SITES_FILE
 
 st.set_page_config(page_title="Flood Risk Assessment", layout="wide", page_icon="🌊")
 

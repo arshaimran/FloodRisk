@@ -1,3 +1,5 @@
 earthengine-api
 pandas
 python-dotenv
+rasterio
+scipy

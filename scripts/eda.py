@@ -4,14 +4,16 @@ Exploratory Data Analysis for the IGI Flood Risk Project.
 Run: python scripts/eda.py
 """
 
-from pathlib import Path
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 import pandas as pd
 import matplotlib.pyplot as plt
+from project_paths import OUTPUTS_DIR
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-INPUT_FILE = BASE_DIR / "outputs" / "sites_with_cities.csv"
-OUTPUT_DIR = BASE_DIR / "outputs" / "eda_figures_claude"
-OUTPUT_DIR.mkdir(exist_ok=True)
+INPUT_FILE = OUTPUTS_DIR / "sites_with_cities.csv"
+OUTPUT_DIR = OUTPUTS_DIR / "eda_figures_claude"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 df = pd.read_csv(INPUT_FILE)
 

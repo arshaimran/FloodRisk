@@ -13,16 +13,17 @@ Setup (once):
 Set EE_PROJECT_ID in a .env file in the project root.
 """
 
-import os
-from pathlib import Path
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+import os
 import ee
 import pandas as pd
 from dotenv import load_dotenv
+from project_paths import DATA_DIR, OUTPUTS_DIR
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-INPUT_FILE = BASE_DIR / "data" / "sites_input.csv"     # switch to test_sites.csv for a quick run
-OUTPUT_FILE = BASE_DIR / "outputs" / "sites_with_hazard.csv"
+INPUT_FILE = DATA_DIR / "sites_input.csv"     # switch to test_sites.csv for a quick run
+OUTPUT_FILE = OUTPUTS_DIR / "sites_with_hazard.csv"
 
 # Set to True for a small test batch (uses getInfo(), synchronous, instant).
 # Set to False for the full ~2,335-site production run (uses Export.table,
