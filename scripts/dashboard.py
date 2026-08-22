@@ -3,6 +3,14 @@ dashboard.py
 Flood Risk Assessment dashboard - reads sites_scored.csv (output of
 risk_score.py) and presents four pages: Executive Summary, Interactive
 Map, Portfolio Explorer, Analytics.
+
+Coastal (WRI Aqueduct) and pluvial (CHIRPS/GEV) return-period data are
+merged in at load time from separate files - these are display-only and
+are never read by risk_score.py. Same for osm_label (from Nominatim),
+used only for free-text area/locality search (DHA, Port Qasim, Sundar,
+etc.) - deliberately not parsed into a structured area/sub_area field,
+since Pakistani location strings don't have a consistent enough
+hierarchy to parse reliably (see project notes).
 """
 
 import sys, pathlib
@@ -65,6 +73,36 @@ TIER_COLORS = {
 @st.cache_data
 def load_data():
     df = pd.read_csv(DATA_FILE)
+
+    # Merge coastal return-period data (display only - risk_score.py never
+    # reads this file or these columns)
+    coastal_file = pathlib.Path(DATA_FILE).parent / "coastal_flood_data_all_sites.csv"
+    if coastal_file.exists():
+        coastal = pd.read_csv(coastal_file)
+        coastal_cols = [c for c in coastal.columns if c.startswith("coastal_")]
+        df = df.merge(coastal[["Site_ID"] + coastal_cols], on="Site_ID", how="left")
+
+    # Merge pluvial return-period data (display only - risk_score.py never
+    # reads this file or these columns)
+    pluvial_file = pathlib.Path(DATA_FILE).parent / "rainfall_return_periods_chirps.csv"
+    if pluvial_file.exists():
+        pluvial = pd.read_csv(pluvial_file)
+        pluvial_cols = [c for c in ["rainfall_RP10_mm", "rainfall_RP100_mm", "rainfall_fit_status"]
+                        if c in pluvial.columns]
+        df = df.merge(pluvial[["Site_ID"] + pluvial_cols], on="Site_ID", how="left")
+
+    # Merge OSM label (Nominatim) for free-text area/locality search only -
+    # display only, never parsed into a structured field, never read by
+    # risk_score.py.
+    nominatim_file = pathlib.Path(DATA_FILE).parent / "sites_nominatim.csv"
+    if nominatim_file.exists():
+        nominatim = pd.read_csv(nominatim_file)
+        if "osm_label" in nominatim.columns:
+            df = df.merge(nominatim[["Site_ID", "osm_label"]], on="Site_ID", how="left")
+
+    if "osm_label" not in df.columns:
+        df["osm_label"] = ""
+
     return df
 
 
@@ -140,34 +178,68 @@ elif page == "2. Interactive Map":
     st.subheader("Interactive Map")
     st.caption("Sites colored by risk tier. Click any point for details.")
 
-    m = folium.Map(location=[30.3, 69.3], zoom_start=6, tiles="CartoDB dark_matter")
+    # --- Search on the left, map on the right ---
+    search_col, map_col = st.columns([1.2, 4])
 
-    for _, row in df.iterrows():
-        color = TIER_COLORS.get(row['risk_tier'], "#94a3b8")
-        popup_html = f"""
-        <div style="font-family: sans-serif; font-size: 13px; min-width:220px;">
-            <b>{row['Client']}</b><br>
-            <b>Risk Tier:</b> {row['risk_tier']}<br>
-            <b>Reason:</b> {row.get('reason', 'N/A')}<br>
-            <b>Riverine Score:</b> {row.get('riverine_score', 'N/A')}<br>
-            <b>Pluvial Score:</b> {row.get('pluvial_score', 'N/A')}<br>
-            <b>Flood Depth (RP100):</b> {row.get('RP100_depth', 'N/A')} m<br>
-            <b>Historical Floods:</b> {row.get('historical_flood_hits', 'N/A')}<br>
-            <b>Sum Insured:</b> Rs. {row['net_sum_insured']/1e9:,.2f}B
-        </div>
-        """
-        folium.CircleMarker(
-            location=[row['Latitude'], row['Longitude']],
-            radius=5,
-            color=color,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.85,
-            weight=1,
-            popup=folium.Popup(popup_html, max_width=300),
-        ).add_to(m)
+    with search_col:
+        st.markdown("### Search Sites")
 
-    st_folium(m, use_container_width=True, height=650)
+        map_search = st.text_input(
+            "Search",
+            placeholder="Client, city, location...",
+            label_visibility="collapsed"
+        )
+
+        if map_search:
+            st.caption("Searching Client, City and Location")
+        else:
+            st.caption(f"Showing all {len(df):,} sites")
+
+    map_df = df
+    if map_search:
+        mask = (df['Client'].str.contains(map_search, case=False, na=False) |
+                df['city'].str.contains(map_search, case=False, na=False) |
+                df['osm_label'].str.contains(map_search, case=False, na=False))
+        map_df = df[mask]
+        if map_df.empty:
+            st.warning("No sites match that search.")
+        else:
+            st.caption(f"{len(map_df)} site(s) match - map zoomed to results.")
+
+    with map_col:
+        m = folium.Map(location=[30.3, 69.3], zoom_start=6, tiles="CartoDB dark_matter")
+
+        for _, row in map_df.iterrows():
+            color = TIER_COLORS.get(row['risk_tier'], "#94a3b8")
+            popup_html = f"""
+            <div style="font-family: sans-serif; font-size: 13px; min-width:220px;">
+                <b>{row['Client']}</b><br>
+                <b>Risk Tier:</b> {row['risk_tier']}<br>
+                <b>Reason:</b> {row.get('reason', 'N/A')}<br>
+                <b>Riverine Score:</b> {row.get('riverine_score', 'N/A')}<br>
+                <b>Pluvial Score:</b> {row.get('pluvial_score', 'N/A')}<br>
+                <b>Flood Depth (RP100):</b> {row.get('RP100_depth', 'N/A')} m<br>
+                <b>Historical Floods:</b> {row.get('historical_flood_hits', 'N/A')}<br>
+                <b>Sum Insured:</b> Rs. {row['net_sum_insured']/1e9:,.2f}B
+            </div>
+            """
+            folium.CircleMarker(
+                location=[row['Latitude'], row['Longitude']],
+                radius=5,
+                color=color,
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.85,
+                weight=1,
+                popup=folium.Popup(popup_html, max_width=300),
+            ).add_to(m)
+
+        if map_search and not map_df.empty:
+            bounds = [[map_df['Latitude'].min(), map_df['Longitude'].min()],
+                      [map_df['Latitude'].max(), map_df['Longitude'].max()]]
+            m.fit_bounds(bounds, padding=(20, 20))
+
+        st_folium(m, use_container_width=True, height=650)
 
 # =======================================================================
 # PAGE 3 - PORTFOLIO EXPLORER
@@ -175,7 +247,7 @@ elif page == "2. Interactive Map":
 elif page == "3. Portfolio Explorer":
     st.subheader("Portfolio Explorer")
 
-    search = st.text_input("Search by Client or City")
+    search = st.text_input("Search by Client, City, or Area (e.g. DHA, Port Qasim, Sundar)")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -188,7 +260,8 @@ elif page == "3. Portfolio Explorer":
     filtered = df.copy()
     if search:
         mask = (filtered['Client'].str.contains(search, case=False, na=False) |
-                filtered['city'].str.contains(search, case=False, na=False))
+                filtered['city'].str.contains(search, case=False, na=False) |
+                filtered['osm_label'].str.contains(search, case=False, na=False))
         filtered = filtered[mask]
     if province_filter:
         filtered = filtered[filtered['province'].isin(province_filter)]
@@ -199,12 +272,34 @@ elif page == "3. Portfolio Explorer":
 
     st.caption(f"{len(filtered)} sites match")
 
-    display_cols = ['Client', 'city', 'province', 'risk_tier', 'reason',
-                     'net_sum_insured', 'RP100_depth']
+    filtered = filtered.copy()
+
+    filtered["Fluvial RP10/100/500 (m)"] = filtered.apply(
+        lambda r: f"{r.get('RP10_depth', 0):.2f} / {r.get('RP100_depth', 0):.2f} / {r.get('RP500_depth', 0):.2f}",
+        axis=1
+    )
+    filtered["Coastal RP100/1000 (m)"] = filtered.apply(
+        lambda r: "N/A" if pd.isna(r.get("coastal_RP100_depth_m")) else f"{r['coastal_RP100_depth_m']:.2f} / {r['coastal_RP1000_depth_m']:.2f}",
+        axis=1
+    )
+    filtered["Pluvial RP10/100 (mm)"] = filtered.apply(
+        lambda r: "N/A" if r.get("rainfall_fit_status") != "Stable" else f"{r.get('rainfall_RP10_mm', 0):.1f} / {r.get('rainfall_RP100_mm', 0):.1f}",
+        axis=1
+    )
+
+    display_cols = ['Client', 'city', 'province', 'osm_label', 'risk_tier', 'reason', 'net_sum_insured',
+                    'Fluvial RP10/100/500 (m)', 'Coastal RP100/1000 (m)', 'Pluvial RP10/100 (mm)']
     display_df = filtered[display_cols].rename(columns={
-        'net_sum_insured': 'Insured Value (PKR)', 'RP100_depth': 'Flood Depth (m)'
+        'net_sum_insured': 'Insured Value (PKR)', 'osm_label': 'Location Detail'
     })
     st.dataframe(display_df, use_container_width=True, height=500)
+
+    st.caption(
+        "Fluvial: modeled river flood depth by return period (JRC). "
+        "Coastal: modeled storm-surge depth by return period (WRI Aqueduct/GTSR) - N/A means the site is not in a coastal-exposed area. "
+        "Pluvial: statistically estimated rainfall depth by return period (CHIRPS/GEV, grid-cell resolution, not property-level) - N/A means the estimate failed a plausibility check or the site has insufficient history. "
+        "Search matches Client, City, and full location detail (e.g. DHA, Port Qasim, Sundar Industrial Estate)."
+    )
 
 # =======================================================================
 # PAGE 4 - ANALYTICS
