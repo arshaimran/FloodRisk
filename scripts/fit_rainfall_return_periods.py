@@ -1,110 +1,221 @@
-"""Fit Gumbel rainfall return periods from CHIRPS annual daily maxima.
+"""Fit rainfall return periods from CHIRPS annual daily maxima.
 
-With about 35 annual maxima, the RP500 estimate is a substantial extrapolation
-beyond the observed record. It must be treated as lower confidence than RP10 or
-RP100 in any later dashboard or decision-support display.
+Return-period estimates are used for dashboard display only, not risk scoring.
+
+A simple plausibility check is applied to the RP100 estimate:
+    RP100 <= 3 * observed annual maximum  -> Stable
+    otherwise                              -> Unstable - not displayed
+
+Unstable and insufficient-data sites have null return-period values.
 """
 
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import gumbel_r
+from scipy.stats import genextreme
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
 INPUT_FILE = BASE_DIR / "outputs" / "annual_max_daily_rainfall_chirps.csv"
 SITES_FILE = BASE_DIR / "data" / "sites_input.csv"
-HAZARD_FILE = BASE_DIR / "outputs" / "sites_with_cities.csv"
 OUTPUT_FILE = BASE_DIR / "outputs" / "rainfall_return_periods_chirps.csv"
+
 MIN_RECORD_YEARS = 15
-RETURN_PERIODS = (10, 100, 500)
+RETURN_PERIODS = (10, 100)
 
 
 def return_level(values, period):
-    """Fit a Gumbel maximum distribution and return its annual exceedance level."""
-    location, scale = gumbel_r.fit(values)
-    return float(gumbel_r.ppf(1 - 1 / period, location, scale))
+    """Fit a GEV distribution and return the requested rainfall return level."""
+    shape, location, scale = genextreme.fit(values)
+
+    probability = 1 - 1 / period
+
+    return float(
+        genextreme.ppf(
+            probability,
+            shape,
+            loc=location,
+            scale=scale,
+        )
+    )
 
 
 def fit_site(group):
-    """Fit one site's valid annual maxima or return explicit nulls for short records."""
-    values = pd.to_numeric(group["annual_max_daily_rainfall_mm"], errors="coerce").dropna()
+    """Fit one site's rainfall return periods."""
+
+    values = pd.to_numeric(
+        group["annual_max_daily_rainfall_mm"],
+        errors="coerce",
+    ).dropna()
+
     record_years = len(values)
+
     result = {
         "Site_ID": group["Site_ID"].iloc[0],
         "Client": group["Client"].iloc[0],
         "years_used": record_years,
+        "observed_annual_max_mm": np.nan,
         "rainfall_RP10_mm": np.nan,
         "rainfall_RP100_mm": np.nan,
-        "rainfall_RP500_mm": np.nan,
+        "rainfall_fit_status": "Insufficient data",
     }
-    if record_years >= MIN_RECORD_YEARS:
-        result.update({f"rainfall_RP{period}_mm": return_level(values, period) for period in RETURN_PERIODS})
+
+    # Not enough years to fit a meaningful distribution.
+    if record_years < MIN_RECORD_YEARS:
+        return result
+
+    observed_max = float(values.max())
+
+    rp10 = return_level(values, 10)
+    rp100 = return_level(values, 100)
+
+    result["observed_annual_max_mm"] = observed_max
+
+    # Simple plausibility check requested for dashboard display.
+    if np.isfinite(rp100) and rp100 <= 3 * observed_max:
+        result["rainfall_RP10_mm"] = rp10
+        result["rainfall_RP100_mm"] = rp100
+        result["rainfall_fit_status"] = "Stable"
+    else:
+        result["rainfall_fit_status"] = "Unstable - not displayed"
+
     return result
 
 
-def print_plausibility_check(out):
-    """Compare a deterministic ten-site sample with existing monsoon maxima."""
-    if not HAZARD_FILE.exists():
-        print(f"Check B unavailable: {HAZARD_FILE} does not exist.")
-        return
-    hazard = pd.read_csv(HAZARD_FILE)
-    required = {"Site_ID", "monsoon_max_rainfall_mm"}
-    if not required.issubset(hazard.columns):
-        print("Check B unavailable: existing hazard file lacks monsoon_max_rainfall_mm.")
-        return
-
-    compare = out.merge(hazard[["Site_ID", "monsoon_max_rainfall_mm"]], on="Site_ID", how="left")
-    compare = compare.dropna(subset=["rainfall_RP100_mm", "monsoon_max_rainfall_mm"]).sort_values("Site_ID")
-    compare["rp100_below_observed_max"] = compare["rainfall_RP100_mm"] < compare["monsoon_max_rainfall_mm"]
-    sample = compare.iloc[np.linspace(0, len(compare) - 1, min(10, len(compare)), dtype=int)]
-    print("\n=== CHECK B: RP100 versus existing monsoon historical maximum (sample) ===")
-    print(sample[["Site_ID", "Client", "monsoon_max_rainfall_mm", "rainfall_RP100_mm", "rp100_below_observed_max"]].to_string(index=False))
-    below = int(compare["rp100_below_observed_max"].sum())
-    print(f"RP100 below existing observed monsoon maximum: {below}/{len(compare)} fitted sites")
-    if below:
-        print("FLAG: investigate before relying on RP100 values that fall below the observed maximum.")
-
-
 def main():
-    annual = pd.read_csv(INPUT_FILE)
-    required = {"Site_ID", "Client", "year", "annual_max_daily_rainfall_mm"}
-    missing = required - set(annual.columns)
-    if missing:
-        raise ValueError(f"{INPUT_FILE.name} is missing required columns: {sorted(missing)}")
 
-    results = [fit_site(group) for _, group in annual.groupby("Site_ID", sort=False)]
+    annual = pd.read_csv(INPUT_FILE)
+
+    required = {
+        "Site_ID",
+        "Client",
+        "year",
+        "annual_max_daily_rainfall_mm",
+    }
+
+    missing = required - set(annual.columns)
+
+    if missing:
+        raise ValueError(
+            f"{INPUT_FILE.name} is missing required columns: {sorted(missing)}"
+        )
+
+    print("==============================================")
+    print("RAINFALL RETURN PERIOD FIT")
+    print("==============================================")
+    print(f"Input rows: {len(annual):,}")
+    print(f"Unique sites: {annual['Site_ID'].nunique():,}")
+    print()
+
+    results = []
+
+    grouped = annual.groupby("Site_ID", sort=False)
+    total_groups = len(grouped)
+
+    for i, (_, group) in enumerate(grouped, start=1):
+
+        results.append(fit_site(group))
+
+        # Progress output every 50 sites
+        if i % 50 == 0 or i == total_groups:
+            print(f"Fitted {i:,}/{total_groups:,} rainfall series...")
+
     out = pd.DataFrame(results)
 
-    # Preserve one output row for every current portfolio site, even if extraction
-    # returned no observations for one of them.
+    # Preserve one output row for every current portfolio site.
     sites = pd.read_csv(SITES_FILE)[["Site_ID", "Client"]]
-    out = sites.merge(out.drop(columns="Client"), on="Site_ID", how="left")
+
+    out = sites.merge(
+        out.drop(columns="Client"),
+        on="Site_ID",
+        how="left",
+    )
+
     out["years_used"] = out["years_used"].fillna(0).astype(int)
 
+    # Any site that somehow has no status gets treated as insufficient data.
+    out["rainfall_fit_status"] = out["rainfall_fit_status"].fillna(
+        "Insufficient data"
+    )
+
+    # Ensure unstable / insufficient sites never expose raw RP values.
+    invalid_status = out["rainfall_fit_status"].isin(
+        [
+            "Unstable - not displayed",
+            "Insufficient data",
+        ]
+    )
+
+    out.loc[
+        invalid_status,
+        ["rainfall_RP10_mm", "rainfall_RP100_mm"],
+    ] = np.nan
+
+    # Only keep the requested display columns.
+    output_columns = [
+        "Site_ID",
+        "Client",
+        "years_used",
+        "observed_annual_max_mm",
+        "rainfall_RP10_mm",
+        "rainfall_RP100_mm",
+        "rainfall_fit_status",
+    ]
+
+    out = out[output_columns]
+
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    out.to_csv(OUTPUT_FILE, index=False)
 
-    successful = out["rainfall_RP100_mm"].notna()
-    successful_n = int(successful.sum())
-    insufficient_n = len(out) - successful_n
-    print(f"Wrote {len(out)} site rows to {OUTPUT_FILE}")
-    print(f"Successful fits: {successful_n}")
-    print(f"Insufficient-data/null fits: {insufficient_n} (minimum {MIN_RECORD_YEARS} years)")
-    if successful_n:
-        stats = out.loc[successful, "rainfall_RP100_mm"].agg(["min", "median", "max"])
-        print("RP100 summary (mm):")
-        print(stats.to_string())
+    out.to_csv(
+        OUTPUT_FILE,
+        index=False,
+    )
 
-    valid = out.loc[successful]
-    ordering_violations = int((
-        (valid["rainfall_RP10_mm"] >= valid["rainfall_RP100_mm"])
-        | (valid["rainfall_RP100_mm"] >= valid["rainfall_RP500_mm"])
-    ).sum())
-    print(f"\n=== CHECK A: RP10 < RP100 < RP500 ===")
-    print(f"Ordering violations: {ordering_violations}/{successful_n}")
-    print_plausibility_check(out)
+    # --------------------------------------------------
+    # FINAL REPORT
+    # --------------------------------------------------
+
+    stable = int(
+        (out["rainfall_fit_status"] == "Stable").sum()
+    )
+
+    unstable = int(
+        (out["rainfall_fit_status"] == "Unstable - not displayed").sum()
+    )
+
+    insufficient = int(
+        (out["rainfall_fit_status"] == "Insufficient data").sum()
+    )
+
+    print()
+    print("==============================================")
+    print("FIT SUMMARY")
+    print("==============================================")
+
+    print(f"Output site rows: {len(out):,}")
+    print(f"Stable: {stable:,}")
+    print(f"Unstable - not displayed: {unstable:,}")
+    print(f"Insufficient data: {insufficient:,}")
+
+    print()
+    print("==============================================")
+    print("RAIN FALL FIT STATUS")
+    print("==============================================")
+
+    print(
+        out["rainfall_fit_status"]
+        .value_counts()
+        .to_string()
+    )
+
+    print()
+    print("Saved rainfall return-period data to:")
+    print(OUTPUT_FILE)
+
+    print()
+    print("Done.")
 
 
 if __name__ == "__main__":
