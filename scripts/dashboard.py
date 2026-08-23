@@ -74,16 +74,12 @@ TIER_COLORS = {
 def load_data():
     df = pd.read_csv(DATA_FILE)
 
-    # Merge coastal return-period data (display only - risk_score.py never
-    # reads this file or these columns)
     coastal_file = pathlib.Path(DATA_FILE).parent / "coastal_flood_data_all_sites.csv"
     if coastal_file.exists():
         coastal = pd.read_csv(coastal_file)
         coastal_cols = [c for c in coastal.columns if c.startswith("coastal_")]
         df = df.merge(coastal[["Site_ID"] + coastal_cols], on="Site_ID", how="left")
 
-    # Merge pluvial return-period data (display only - risk_score.py never
-    # reads this file or these columns)
     pluvial_file = pathlib.Path(DATA_FILE).parent / "rainfall_return_periods_chirps.csv"
     if pluvial_file.exists():
         pluvial = pd.read_csv(pluvial_file)
@@ -91,9 +87,6 @@ def load_data():
                         if c in pluvial.columns]
         df = df.merge(pluvial[["Site_ID"] + pluvial_cols], on="Site_ID", how="left")
 
-    # Merge OSM label (Nominatim) for free-text area/locality search only -
-    # display only, never parsed into a structured field, never read by
-    # risk_score.py.
     nominatim_file = pathlib.Path(DATA_FILE).parent / "sites_nominatim.csv"
     if nominatim_file.exists():
         nominatim = pd.read_csv(nominatim_file)
@@ -109,13 +102,35 @@ def load_data():
 df = load_data()
 
 # ---------------------------------------------------------------------
+# Session state for map-click -> Portfolio Explorer navigation
+#
+# IMPORTANT: st.session_state.nav_page cannot be reassigned in the same
+# run once the radio widget (key="nav_page") has been instantiated below.
+# So a click handler never sets nav_page directly - it sets a separate
+# "pending_nav" flag and calls st.rerun(). On the NEXT run, we apply
+# pending_nav to nav_page here, BEFORE the radio widget is created -
+# which is allowed, since the widget hasn't been instantiated yet in
+# this fresh run.
+# ---------------------------------------------------------------------
+if "nav_page" not in st.session_state:
+    st.session_state.nav_page = "1. Executive Summary"
+if "portfolio_search" not in st.session_state:
+    st.session_state.portfolio_search = ""
+if "pending_nav" not in st.session_state:
+    st.session_state.pending_nav = None
+
+if st.session_state.pending_nav is not None:
+    st.session_state.nav_page = st.session_state.pending_nav
+    st.session_state.pending_nav = None
+
+# ---------------------------------------------------------------------
 # Sidebar navigation
 # ---------------------------------------------------------------------
 st.sidebar.title("🌊 Flood Risk Assessment")
 page = st.sidebar.radio("Navigate", [
     "1. Executive Summary", "2. Interactive Map",
     "3. Portfolio Explorer", "4. Analytics"
-])
+], key="nav_page")
 
 st.title("Flood Risk Assessment")
 
@@ -176,7 +191,7 @@ if page == "1. Executive Summary":
 # =======================================================================
 elif page == "2. Interactive Map":
     st.subheader("Interactive Map")
-    st.caption("Sites colored by risk tier. Click any point for details.")
+    st.caption("Sites colored by risk tier. Click a marker, then use the button below to see full details.")
 
     # --- Search on the left, map on the right ---
     search_col, map_col = st.columns([1.2, 4])
@@ -212,15 +227,11 @@ elif page == "2. Interactive Map":
         for _, row in map_df.iterrows():
             color = TIER_COLORS.get(row['risk_tier'], "#94a3b8")
             popup_html = f"""
-            <div style="font-family: sans-serif; font-size: 13px; min-width:220px;">
+            <div style="font-family: sans-serif; font-size: 13px; min-width:200px;">
                 <b>{row['Client']}</b><br>
-                <b>Risk Tier:</b> {row['risk_tier']}<br>
-                <b>Reason:</b> {row.get('reason', 'N/A')}<br>
-                <b>Riverine Score:</b> {row.get('riverine_score', 'N/A')}<br>
-                <b>Pluvial Score:</b> {row.get('pluvial_score', 'N/A')}<br>
-                <b>Flood Depth (RP100):</b> {row.get('RP100_depth', 'N/A')} m<br>
-                <b>Historical Floods:</b> {row.get('historical_flood_hits', 'N/A')}<br>
-                <b>Sum Insured:</b> Rs. {row['net_sum_insured']/1e9:,.2f}B
+                <b>Location:</b> {row.get('osm_label', 'N/A')}<br>
+                <b>City:</b> {row.get('city', 'N/A')}<br>
+                <b>Risk Tier:</b> {row['risk_tier']}
             </div>
             """
             folium.CircleMarker(
@@ -231,7 +242,8 @@ elif page == "2. Interactive Map":
                 fill_color=color,
                 fill_opacity=0.85,
                 weight=1,
-                popup=folium.Popup(popup_html, max_width=300),
+                popup=folium.Popup(popup_html, max_width=280),
+                tooltip=row['Site_ID'],
             ).add_to(m)
 
         if map_search and not map_df.empty:
@@ -239,7 +251,18 @@ elif page == "2. Interactive Map":
                       [map_df['Latitude'].max(), map_df['Longitude'].max()]]
             m.fit_bounds(bounds, padding=(20, 20))
 
-        st_folium(m, use_container_width=True, height=650)
+        map_state = st_folium(m, use_container_width=True, height=650)
+
+    clicked_id = map_state.get("last_object_clicked_tooltip") if map_state else None
+    if clicked_id:
+        clicked_row = df[df["Site_ID"] == clicked_id]
+        if not clicked_row.empty:
+            client_name = clicked_row.iloc[0]["Client"]
+            st.info(f"Selected: **{client_name}**")
+            if st.button("View full details in Portfolio Explorer"):
+                st.session_state.portfolio_search = client_name
+                st.session_state.pending_nav = "3. Portfolio Explorer"
+                st.rerun()
 
 # =======================================================================
 # PAGE 3 - PORTFOLIO EXPLORER
@@ -247,7 +270,10 @@ elif page == "2. Interactive Map":
 elif page == "3. Portfolio Explorer":
     st.subheader("Portfolio Explorer")
 
-    search = st.text_input("Search by Client, City, or Area (e.g. DHA, Port Qasim, Sundar)")
+    search = st.text_input(
+        "Search by Client, City, or Area (e.g. DHA, Port Qasim, Sundar)",
+        key="portfolio_search"
+    )
 
     col1, col2, col3 = st.columns(3)
     with col1:
