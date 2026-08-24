@@ -316,6 +316,7 @@ if page == "1. Executive Summary":
 
         pie_df.columns = ["risk_tier", "count"]
 
+
         fig = px.pie(
             pie_df,
             names="risk_tier",
@@ -335,14 +336,25 @@ if page == "1. Executive Summary":
         fig.update_layout(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            legend_title_text="",
-            margin=dict(l=10, r=10, t=20, b=10)
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.1,
+                xanchor="center",
+                x=0.5,
+                title_text=""
+            ),
+            margin=dict(l=20, r=20, t=20, b=10),
+            height=460
         )
 
         st.plotly_chart(
             fig,
             use_container_width=True
         )
+
+
+    
 
     # -----------------------------------------------------------------
     # CITY RISK OVERVIEW
@@ -399,7 +411,8 @@ if page == "1. Executive Summary":
             yaxis_title="",
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            margin=dict(l=10, r=80, t=20, b=10)
+            margin=dict(l=10, r=100, t=20, b=10),
+            height=460
         )
 
         st.plotly_chart(
@@ -1024,81 +1037,52 @@ elif page == "4. Analytics":
 
         st.markdown("##### Risk by Hazard")
 
-        if "dominant_hazard" in df.columns:
+        hazard_df = df.copy()
 
-            hazard_df = (
-                df.groupby(
-                    [
-                        "dominant_hazard",
-                        "risk_tier"
-                    ]
-                )
-                .size()
-                .reset_index(
-                    name="sites"
-                )
+        hazard_df["risk_tier_display"] = hazard_df["risk_tier"].replace({"Coastal/Marine - Requires Storm Surge Assessment": "Coastal"})
+
+        hazard_counts = (hazard_df.groupby(["dominant_hazard", "risk_tier_display"]).size().reset_index(name="Sites"))
+
+        fig = px.bar(
+            hazard_counts,
+            x="dominant_hazard",
+            y="Sites",
+            color="risk_tier_display",
+            color_discrete_map={
+                "Critical": "#ef4444",
+                "High": "#f97316",
+                "Medium": "#eab308",
+                "Low": "#22c55e",
+                "Coastal": "#38bdf8",
+                "Insufficient Data": "#6b7280"
+            },
+            template=PLOTLY_TEMPLATE,
+            barmode="stack",
+            labels={"dominant_hazard": "Hazard","risk_tier_display": "Risk Tier"}
+        )
+
+        fig.update_layout(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            legend_title_text="Risk Tier",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="center",
+                x=0.5
+             ),
+            margin=dict(l=50, r=30, t=60, b=70),
+            xaxis=dict(
+            title=None,
+            tickangle=0
+            ),
+            yaxis=dict(
+            title="Sites"
             )
+        )
 
-            hazard_totals = (
-                hazard_df
-                .groupby("dominant_hazard")["sites"]
-                .sum()
-                .sort_values(
-                    ascending=False
-                )
-                .head(6)
-                .index
-            )
+        st.plotly_chart(fig, use_container_width=True)
 
-            hazard_df = hazard_df[
-                hazard_df["dominant_hazard"]
-                .isin(hazard_totals)
-            ]
 
-            fig = px.bar(
-                hazard_df,
-                x="dominant_hazard",
-                y="sites",
-                color="risk_tier",
-                color_discrete_map=TIER_COLORS,
-                barmode="relative",
-                template=PLOTLY_TEMPLATE
-            )
-
-            fig.update_layout(
-                xaxis_title="",
-                yaxis_title="Sites",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                xaxis_tickangle=-25
-            )
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True
-            )
-
-    # -----------------------------------------------------------------
-    # FINAL SCORE DISTRIBUTION
-    # -----------------------------------------------------------------
-    st.markdown("##### Risk Score Distribution")
-
-    fig = px.histogram(
-        df,
-        x="final_score",
-        nbins=5,
-        template=PLOTLY_TEMPLATE,
-        color_discrete_sequence=["#3b82f6"]
-    )
-
-    fig.update_layout(
-        xaxis_title="Risk Score",
-        yaxis_title="Number of Sites",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+        
