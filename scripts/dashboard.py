@@ -355,16 +355,17 @@ if st.session_state.pending_nav is not None:
 # --------------------------------------------------------------------- 
 st.sidebar.title("🌊 Flood Risk Assessment") 
  
-page = st.sidebar.radio( 
-    "Navigate", 
-    [ 
-        "1. Executive Summary", 
-        "2. Interactive Map", 
-        "3. Portfolio Explorer", 
-        "4. Analytics" 
-    ], 
-    key="nav_page" 
-) 
+page = st.sidebar.radio(
+    "Navigate",
+    [
+        "1. Executive Summary",
+        "2. Interactive Map",
+        "3. Portfolio Explorer",
+        "4. Analytics",
+        "Methodology"
+    ],
+    key="nav_page"
+)
  
 st.title("Flood Risk Assessment") 
  
@@ -445,10 +446,32 @@ if page == "1. Executive Summary":
         f'</div>', 
         unsafe_allow_html=True 
     ) 
- 
-    st.write("") 
- 
-    col_a, col_b = st.columns(2) 
+
+    st.write("")
+
+    # Prominent Methodology card/button on the Executive Summary
+    m_l, m_c, m_r = st.columns([1, 4, 1])
+    with m_c:
+        st.markdown(
+            """
+            <div class="kpi-card" style="padding:18px;">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <div style="font-size:30px">📘</div>
+                <div>
+                  <div style="font-size:18px;font-weight:700;color:#f1f5f9">How is Flood Risk Calculated?</div>
+                  <div style="color:#cbd5e1">Understand the data, methodology and evidence behind each risk assessment.</div>
+                </div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("Open Methodology"):
+            st.session_state.pending_nav = "Methodology"
+            st.rerun()
+
+    col_a, col_b = st.columns(2)
  
     # ----------------------------------------------------------------- 
     # RISK DISTRIBUTION 
@@ -570,6 +593,179 @@ if page == "1. Executive Summary":
         ) 
  
  
+# ===================================================================== 
+# PAGE - METHODOLOGY
+# ===================================================================== 
+elif page == "Methodology":
+
+    st.header("How is Flood Risk Calculated?")
+
+    st.subheader("This assessment combines multiple independent sources of flood, rainfall, terrain and historical evidence to evaluate the exposure of each insured location.")
+
+    st.info(
+        "The system is designed to support portfolio risk assessment and decision-making. Results should be used alongside professional underwriting and risk management judgement."
+    )
+
+    if st.button("Back to Dashboard"):
+        st.session_state.pending_nav = "1. Executive Summary"
+        st.rerun()
+
+    st.write("")
+
+    # Flow diagram (simple horizontal flow using columns)
+    st.markdown("##### How the assessment works")
+    f1, f2, f3, f4, f5 = st.columns([1,1,1,1,1])
+    with f1:
+        st.markdown("**Insured Locations**")
+    with f2:
+        st.markdown("↓\n**Hazard & Environmental Data**")
+    with f3:
+        st.markdown("↓\n**River and Rainfall Risk Assessment**")
+    with f4:
+        st.markdown("↓\n**Historical Flood & Claims Evidence**")
+    with f5:
+        st.markdown("↓\n**Final Risk Classification**")
+
+    st.write("")
+    st.markdown(
+        "Each insured location is assessed using multiple independent indicators of flood risk. Rather than relying on a single dataset, the system combines modeled flood hazard, rainfall patterns, terrain characteristics, satellite-observed flooding and available insurance claims history."
+    )
+
+    st.warning(
+        "Risk is assessed using both the severity of potential flooding and evidence of whether the location is particularly vulnerable."
+    )
+
+    # Data source cards
+    st.markdown("##### What data is used?")
+    cards = st.columns(3)
+
+    with cards[0]:
+        st.markdown("**River Flood Hazard**  \n Modeled river flood scenarios are used to understand how deeply an area could be affected during different levels of river flooding.  \n**What is considered:** flood depth in more frequent, severe and extreme scenarios.  \n**Source:** JRC Global Flood Hazard Maps (European Commission / Copernicus Emergency Management Service)")
+
+        st.write("")
+
+        st.markdown("**Rainfall Exposure**  \n Historical satellite rainfall data is used to understand how frequently locations experience severe monsoon rainfall.  \n**What is considered:** long-term rainfall patterns, extreme daily rainfall, monsoon-season intensity.  \n**Period analysed:** 2005–2025  \n**Source:** CHIRPS (Climate Hazards Group InfraRed Precipitation with Station Data)")
+
+    with cards[1]:
+        st.markdown("**Terrain & Topography**  \n The physical landscape affects how water moves and accumulates. Terrain information helps identify locations that may be more vulnerable to water pooling or flooding.  \n**What is considered:** elevation, height relative to nearby drainage, local terrain variation.  \n**Source:** MERIT Hydro")
+
+        st.write("")
+
+        st.markdown("**Historical Flooding**  \n Satellite observations provide evidence of whether flooding has previously been detected around a location.  \n**Purpose:** supports whether modeled or rainfall hazards translate into real exposure.  \n**Source:** Global Flood Database, MODIS satellite observations")
+
+    with cards[2]:
+        st.markdown("**Claims History**  \n Where available, internal insurance claims information provides real-world evidence of previous flood-related losses.  \n**Purpose:** repeated claims associated with a location or insured client are treated as important evidence of real-world vulnerability.  \n**Source:** IGI portfolio and claims data")
+
+        st.write("")
+
+        st.markdown("**Coastal Flooding**  \n Locations in coastal areas may face flood risks that are different from inland river or rainfall flooding. Coastal scenarios are assessed separately where relevant.  \n**Source:** Aqueduct / GTSR coastal flood data")
+
+    st.markdown("##### Two main types of flood risk")
+    r1, r2 = st.columns(2)
+    with r1:
+        st.subheader("River Flooding")
+        st.markdown("Riverine flooding occurs when rivers, streams or major water systems overflow into surrounding areas.  \n**Considered:** modeled flood depth, severity across scenarios, height relative to nearby drainage.  \n**Business interpretation:** A location exposed to deeper flooding in severe river flood scenarios will generally receive a higher river flood hazard score.")
+    with r2:
+        st.subheader("Rainfall & Surface Flooding")
+        st.markdown("Pluvial flooding occurs when intense rainfall overwhelms local drainage and causes surface water accumulation.  \n**Considered:** severe monsoon rainfall, terrain allowing water accumulation, historical satellite-observed flooding, repeat insurance claims.  \n**Business interpretation:** High rainfall alone does not automatically mean a location is high risk; the system also looks for evidence that the location is vulnerable.")
+
+    st.markdown("##### From Hazard to Risk")
+    st.markdown("**Step 1 — Identify Hazard:** The system first measures the potential severity of river flooding and intense rainfall at each location.")
+    st.markdown("**Step 2 — Check Site Vulnerability:** The system then looks for evidence that the location is particularly vulnerable, such as terrain conditions or previous flood observations.")
+    st.markdown("**Step 3 — Consider Historical Evidence:** Historical satellite flooding and available insurance claims provide additional real-world evidence.")
+    st.markdown("**Step 4 — Assign Risk Tier:** The combined strength of hazard and supporting evidence is used to assign the final risk classification.")
+
+    st.warning("Higher risk classifications are supported by stronger or multiple independent indicators wherever possible.")
+    st.markdown("For example, severe rainfall exposure alone may indicate a potential hazard. Severe rainfall combined with low-lying terrain, historical flooding or repeated claims provides stronger evidence of actual vulnerability.")
+
+    # Risk tiers
+    st.markdown("##### Understanding the Risk Tiers")
+    t1, t2, t3, t4 = st.columns(4)
+    with t1:
+        st.markdown("**CRITICAL**  \n Strong evidence of severe flood exposure or repeated historical loss.  \n**Business implication:** Highest priority for detailed review and risk management.")
+    with t2:
+        st.markdown("**HIGH**  \n Significant flood exposure identified through modeled hazard or supporting evidence.  \n**Business implication:** May require closer underwriting review and risk assessment.")
+    with t3:
+        st.markdown("**MEDIUM**  \n Some flood exposure is present, but the severity or supporting evidence is more limited.  \n**Business implication:** Remain visible for monitoring and portfolio-level assessment.")
+    with t4:
+        st.markdown("**LOW**  \n Limited flood hazard is currently identified from the available indicators.  \n**Important note:** Low risk does not mean zero flood risk.")
+
+    # Why multiple sources
+    st.markdown("##### Why not use just one flood dataset?")
+    st.markdown("Flood risk is influenced by many factors. Using multiple independent sources gives a more balanced view than relying on a single indicator.")
+    st.table({
+        "Indicator": ["River flood depth", "Extreme rainfall", "Terrain", "Historical flooding", "Claims history", "Coastal scenarios"],
+        "What It Helps Us Understand": [
+            "Potential severity of river flooding",
+            "Exposure to intense monsoon rainfall",
+            "Whether landscape encourages water accumulation",
+            "Evidence of previous satellite-observed flood events",
+            "Evidence of actual insured losses",
+            "Exposure to coastal inundation where relevant"
+        ]
+    })
+
+    # Return periods
+    st.markdown("##### Understanding Return Periods")
+    st.markdown("A return period is a way of describing the rarity or severity of a flood or rainfall event. A 100-year flood does NOT mean it happens only once every 100 years; it describes an event with approximately a 1% chance of being reached or exceeded in any single year.")
+
+    st.markdown("###### River Flood Scenarios")
+    st.markdown("River flood exposure is based on modeled flood scenarios (for example: 10-year, 100-year, 500-year). The dashboard identifies the lowest severity scenario in which modeled flooding is present at the location. These are modeled scenario intervals, not exact predictions.")
+
+    st.markdown("###### Rainfall Recurrence")
+    st.markdown("Rainfall recurrence is estimated from historical annual maximum daily rainfall (CHIRPS) over the available record (2005–2025). Statistical estimates produce display bands (for example 10, 50, 100, 250, 500 years). Rainfall return periods are provided to communicate recurrence and do not directly determine the final flood risk tier.")
+
+    st.markdown("###### Coastal Flood Scenarios")
+    st.markdown("Coastal locations use separate modeled coastal scenarios (e.g. 2-year, 10-year, 100-year, 1,000-year). These are modeled coastal flood scenarios and should not be interpreted as exact predictions.")
+
+    st.markdown("##### Does the return period affect the risk tier?")
+    st.info("No. Return-period information is displayed separately to help users understand recurrence and severity. The final risk tier is calculated using the broader methodology which combines hazard severity with terrain, historical flooding and claims evidence.")
+
+    # Data sources table
+    st.markdown("##### Data sources")
+    st.table({
+        "Source": [
+            "JRC Global Flood Hazard Maps",
+            "Global Flood Database",
+            "MERIT Hydro",
+            "CHIRPS",
+            "Aqueduct / GTSR",
+            "IGI Internal Data"
+        ],
+        "Data Used": [
+            "River flood depth scenarios",
+            "Satellite-observed flood events",
+            "Elevation and terrain",
+            "Historical rainfall",
+            "Coastal flood scenarios",
+            "Portfolio and claims data"
+        ],
+        "Purpose": [
+            "River flood exposure",
+            "Historical flood evidence",
+            "Site vulnerability and water accumulation",
+            "Rainfall intensity and recurrence",
+            "Coastal exposure",
+            "Real-world exposure and claims evidence"
+        ]
+    })
+
+    # Limitations
+    with st.expander("Important limitations (expand to read)"):
+        st.markdown("This assessment is designed as a portfolio-level flood risk intelligence tool.")
+        st.markdown("- Results depend on the availability and resolution of the underlying datasets.")
+        st.markdown("- Global and satellite datasets may not capture every highly localized drainage issue.")
+        st.markdown("- The absence of recorded historical flooding does not guarantee that flooding cannot occur in the future.")
+        st.markdown("- Return periods describe probability or modeled scenarios and should not be interpreted as predictions.")
+        st.markdown("- Risk classifications represent relative exposure based on the available evidence.")
+        st.markdown("- The assessment is intended to support, not replace, detailed engineering surveys, underwriting judgement or site-specific inspections.")
+
+    # Technical details
+    with st.expander("Technical Methodology (optional)"):
+        st.markdown("**Risk assessment:** The assessment separately evaluates riverine and pluvial flood exposure. Riverine risk is based primarily on modeled flood depth and terrain relative to drainage. Pluvial risk is based on severe monsoon rainfall combined with evidence of local vulnerability.")
+        st.markdown("**Evidence:** Supporting evidence includes historical satellite-observed flooding, terrain characteristics and available repeat claims. Where repeat claims are associated with a site or insured client, this is treated as strong real-world evidence of flood vulnerability.")
+        st.markdown("**Data separation:** Data extraction, risk scoring and return-period estimation are maintained as separate processes. Return-period calculations are used for dashboard communication and do not modify the underlying risk score.")
+
 # ===================================================================== 
 # PAGE 2 - INTERACTIVE MAP 
 # ===================================================================== 
