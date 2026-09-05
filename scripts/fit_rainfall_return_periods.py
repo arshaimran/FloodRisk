@@ -1,12 +1,34 @@
-"""Fit rainfall return periods from CHIRPS annual daily maxima.
+"""
+Estimate severe rainfall return-period bands from CHIRPS annual maxima.
 
-Return-period estimates are used for dashboard display only, not risk scoring.
+DISPLAY ONLY.
 
-A simple plausibility check is applied to the RP100 estimate:
-    RP100 <= 3 * observed annual maximum  -> Stable
-    otherwise                              -> Unstable - not displayed
+This script does NOT affect:
+    - risk scoring
+    - risk tiers
+    - site flagging
+    - hazard extraction
+    - any underlying portfolio logic
 
-Unstable and insufficient-data sites have null return-period values.
+It only creates a rainfall recurrence estimate for display
+on the dashboard.
+
+Method:
+    1. Use each site's annual maximum daily rainfall series.
+    2. Fit a GEV distribution.
+    3. Calculate rainfall thresholds for fixed return periods:
+       10, 50, 100, 250 and 500 years.
+    4. Compare the site's observed historical maximum rainfall
+       against those thresholds.
+    5. Assign one display band.
+
+Output bands:
+    0-10 years
+    10-50 years
+    50-100 years
+    100-250 years
+    250-500 years
+    500+ years
 """
 
 from pathlib import Path
@@ -18,19 +40,32 @@ from scipy.stats import genextreme
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-INPUT_FILE = BASE_DIR / "outputs" / "annual_max_daily_rainfall_chirps.csv"
-SITES_FILE = BASE_DIR / "data" / "sites_input.csv"
-OUTPUT_FILE = BASE_DIR / "outputs" / "rainfall_return_periods_chirps.csv"
+INPUT_FILE = (
+    BASE_DIR
+    / "outputs"
+    / "annual_max_daily_rainfall_chirps.csv"
+)
+
+SITES_FILE = (
+    BASE_DIR
+    / "data"
+    / "sites_input.csv"
+)
+
+OUTPUT_FILE = (
+    BASE_DIR
+    / "outputs"
+    / "rainfall_return_periods_chirps.csv"
+)
+
 
 MIN_RECORD_YEARS = 15
-RETURN_PERIODS = (10, 100)
 
 
-def return_level(values, period):
-    """Fit a GEV distribution and return the requested rainfall return level."""
-    shape, location, scale = genextreme.fit(values)
+def return_level(shape, location, scale, period):
+    """Calculate rainfall magnitude for a fixed return period."""
 
-    probability = 1 - 1 / period
+    probability = 1 - (1 / period)
 
     return float(
         genextreme.ppf(
@@ -42,8 +77,36 @@ def return_level(values, period):
     )
 
 
+def classify_band(
+    observed_max,
+    rp10,
+    rp50,
+    rp100,
+    rp250,
+    rp500,
+):
+    """Assign a bounded return-period display band."""
+
+    if observed_max < rp10:
+        return "0-10 years"
+
+    if observed_max < rp50:
+        return "10-50 years"
+
+    if observed_max < rp100:
+        return "50-100 years"
+
+    if observed_max < rp250:
+        return "100-250 years"
+
+    if observed_max < rp500:
+        return "250-500 years"
+
+    return "500+ years"
+
+
 def fit_site(group):
-    """Fit one site's rainfall return periods."""
+    """Fit GEV to one site's annual rainfall maxima."""
 
     values = pd.to_numeric(
         group["annual_max_daily_rainfall_mm"],
@@ -57,34 +120,113 @@ def fit_site(group):
         "Client": group["Client"].iloc[0],
         "years_used": record_years,
         "observed_annual_max_mm": np.nan,
-        "rainfall_RP10_mm": np.nan,
-        "rainfall_RP100_mm": np.nan,
+        "rainfall_return_period_band": "Insufficient data",
         "rainfall_fit_status": "Insufficient data",
     }
 
-    # Not enough years to fit a meaningful distribution.
     if record_years < MIN_RECORD_YEARS:
         return result
 
     observed_max = float(values.max())
 
-    rp10 = return_level(values, 10)
-    rp100 = return_level(values, 100)
-
     result["observed_annual_max_mm"] = observed_max
 
-    # Simple plausibility check requested for dashboard display.
-    if np.isfinite(rp100) and rp100 <= 3 * observed_max:
-        result["rainfall_RP10_mm"] = rp10
-        result["rainfall_RP100_mm"] = rp100
-        result["rainfall_fit_status"] = "Stable"
-    else:
-        result["rainfall_fit_status"] = "Unstable - not displayed"
+    try:
+
+        shape, location, scale = genextreme.fit(values)
+
+        rp10 = return_level(
+            shape,
+            location,
+            scale,
+            10,
+        )
+
+        rp50 = return_level(
+            shape,
+            location,
+            scale,
+            50,
+        )
+
+        rp100 = return_level(
+            shape,
+            location,
+            scale,
+            100,
+        )
+
+        rp250 = return_level(
+            shape,
+            location,
+            scale,
+            250,
+        )
+
+        rp500 = return_level(
+            shape,
+            location,
+            scale,
+            500,
+        )
+
+    except Exception:
+
+        result["rainfall_fit_status"] = "Fit failed"
+
+        return result
+
+    # Check all calculated values are valid.
+    thresholds = [
+        rp10,
+        rp50,
+        rp100,
+        rp250,
+        rp500,
+    ]
+
+    if not all(np.isfinite(x) for x in thresholds):
+
+        result["rainfall_fit_status"] = "Invalid fit"
+
+        return result
+
+    # Return levels must increase with return period.
+    if not (
+        rp10 < rp50 < rp100 < rp250 < rp500
+    ):
+
+        result["rainfall_fit_status"] = "Invalid fit"
+
+        return result
+
+    # Basic plausibility check.
+    # Reject extremely unstable extrapolations.
+    if rp500 > observed_max * 10:
+
+        result["rainfall_fit_status"] = "Unstable fit"
+
+        return result
+
+    result["rainfall_return_period_band"] = classify_band(
+        observed_max,
+        rp10,
+        rp50,
+        rp100,
+        rp250,
+        rp500,
+    )
+
+    result["rainfall_fit_status"] = "Stable"
 
     return result
 
 
 def main():
+
+    print("=" * 55)
+    print("RAINFALL RETURN PERIOD BAND ESTIMATION")
+    print("=" * 55)
 
     annual = pd.read_csv(INPUT_FILE)
 
@@ -98,121 +240,144 @@ def main():
     missing = required - set(annual.columns)
 
     if missing:
+
         raise ValueError(
-            f"{INPUT_FILE.name} is missing required columns: {sorted(missing)}"
+            f"Missing required columns: {sorted(missing)}"
         )
 
-    print("==============================================")
-    print("RAINFALL RETURN PERIOD FIT")
-    print("==============================================")
     print(f"Input rows: {len(annual):,}")
-    print(f"Unique sites: {annual['Site_ID'].nunique():,}")
-    print()
+    print(
+        f"Unique sites: "
+        f"{annual['Site_ID'].nunique():,}"
+    )
 
     results = []
 
-    grouped = annual.groupby("Site_ID", sort=False)
-    total_groups = len(grouped)
+    grouped = annual.groupby(
+        "Site_ID",
+        sort=False,
+    )
 
-    for i, (_, group) in enumerate(grouped, start=1):
+    total_sites = len(grouped)
 
-        results.append(fit_site(group))
+    for i, (_, group) in enumerate(
+        grouped,
+        start=1,
+    ):
 
-        # Progress output every 50 sites
-        if i % 50 == 0 or i == total_groups:
-            print(f"Fitted {i:,}/{total_groups:,} rainfall series...")
+        results.append(
+            fit_site(group)
+        )
+
+        if i % 100 == 0 or i == total_sites:
+
+            print(
+                f"Processed "
+                f"{i:,}/{total_sites:,} sites"
+            )
 
     out = pd.DataFrame(results)
 
-    # Preserve one output row for every current portfolio site.
-    sites = pd.read_csv(SITES_FILE)[["Site_ID", "Client"]]
-
-    out = sites.merge(
-        out.drop(columns="Client"),
-        on="Site_ID",
-        how="left",
-    )
-
-    out["years_used"] = out["years_used"].fillna(0).astype(int)
-
-    # Any site that somehow has no status gets treated as insufficient data.
-    out["rainfall_fit_status"] = out["rainfall_fit_status"].fillna(
-        "Insufficient data"
-    )
-
-    # Ensure unstable / insufficient sites never expose raw RP values.
-    invalid_status = out["rainfall_fit_status"].isin(
-        [
-            "Unstable - not displayed",
-            "Insufficient data",
-        ]
-    )
-
-    out.loc[
-        invalid_status,
-        ["rainfall_RP10_mm", "rainfall_RP100_mm"],
-    ] = np.nan
-
-    # Only keep the requested display columns.
-    output_columns = [
+    # Preserve all portfolio sites.
+    sites = pd.read_csv(
+        SITES_FILE
+    )[[
         "Site_ID",
         "Client",
+    ]]
+
+    out = sites.merge(
+
+        out.drop(
+            columns="Client"
+        ),
+
+        on="Site_ID",
+
+        how="left",
+
+    )
+
+    # Fill missing sites.
+    out["years_used"] = (
+        out["years_used"]
+        .fillna(0)
+        .astype(int)
+    )
+
+    out["rainfall_fit_status"] = (
+        out["rainfall_fit_status"]
+        .fillna("Insufficient data")
+    )
+
+    out["rainfall_return_period_band"] = (
+        out["rainfall_return_period_band"]
+        .fillna("Insufficient data")
+    )
+
+    # Final output.
+    output_columns = [
+
+        "Site_ID",
+
+        "Client",
+
         "years_used",
+
         "observed_annual_max_mm",
-        "rainfall_RP10_mm",
-        "rainfall_RP100_mm",
+
+        "rainfall_return_period_band",
+
         "rainfall_fit_status",
+
     ]
 
     out = out[output_columns]
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_FILE.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     out.to_csv(
         OUTPUT_FILE,
         index=False,
     )
 
-    # --------------------------------------------------
-    # FINAL REPORT
-    # --------------------------------------------------
-
-    stable = int(
-        (out["rainfall_fit_status"] == "Stable").sum()
-    )
-
-    unstable = int(
-        (out["rainfall_fit_status"] == "Unstable - not displayed").sum()
-    )
-
-    insufficient = int(
-        (out["rainfall_fit_status"] == "Insufficient data").sum()
-    )
+    print()
+    print("=" * 55)
+    print("RETURN PERIOD BAND SUMMARY")
+    print("=" * 55)
 
     print()
-    print("==============================================")
-    print("FIT SUMMARY")
-    print("==============================================")
-
-    print(f"Output site rows: {len(out):,}")
-    print(f"Stable: {stable:,}")
-    print(f"Unstable - not displayed: {unstable:,}")
-    print(f"Insufficient data: {insufficient:,}")
-
-    print()
-    print("==============================================")
-    print("RAIN FALL FIT STATUS")
-    print("==============================================")
 
     print(
-        out["rainfall_fit_status"]
-        .value_counts()
+        out[
+            "rainfall_return_period_band"
+        ]
+        .value_counts(
+            dropna=False
+        )
         .to_string()
     )
 
     print()
-    print("Saved rainfall return-period data to:")
-    print(OUTPUT_FILE)
+
+    print("FIT STATUS")
+
+    print(
+        out[
+            "rainfall_fit_status"
+        ]
+        .value_counts(
+            dropna=False
+        )
+        .to_string()
+    )
+
+    print()
+
+    print(f"Saved: {OUTPUT_FILE}")
 
     print()
     print("Done.")
