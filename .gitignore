@@ -1,9 +1,38 @@
-.venv/
+
+# Secrets
 .env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+
+# Local datasets and generated files
 data/
 outputs/
+demo_files/
+*.orig
+
+# Local demos and test scripts
+demo.html
 risk_scoreold.py
 test.py
 testmissing.py
+testgemini.py
+test_gemini.py
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

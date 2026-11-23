@@ -259,3 +259,106 @@ unattributed_fanned_claims_history.csv + claims_matched_history.csv
 ## Runtime dependencies
 
 `requirements.txt` names `earthengine-api`, `pandas`, and `python-dotenv`. Additional scripts require undeclared packages: `reverse_geocoder`, `rapidfuzz`, `numpy`, `osmnx`, `geopandas`, `shapely`, `rasterio`, `matplotlib`, `streamlit`, `plotly`, `folium`, and `streamlit-folium`. This discrepancy is a deployment limitation: a clean environment cannot run every script from `requirements.txt` alone.
+
+## Other scripts and utilities (summary)
+
+- `test_gemini.py`: small experiment/test harness (local development artifact).
+- `scripts/test_lahore_nominatim.py`: geocoding/nomatim experimentation for Lahore-specific coordinates.
+- `scripts/pull_annual_max_rainfall.py`: downloads/aggregates annual maximum daily rainfall series (CHIRPS) used by return-period analysis.
+- `scripts/fit_rainfall_return_periods.py`: fits GEV to annual-max series and exports rainfall RP10/RP100 estimates.
+- `scripts/create_return_period_display.py`: prepares display-ready rainfall return-period CSVs for the dashboard.
+- `scripts/geocode_all_sites.py`: batch geocoding helper for sites when reverse-geocoder cache is missing or incomplete.
+- `scripts/pull_annual_max_rainfall.py`: orchestrates CHIRPS pulls for annual maxima per site.
+- `scripts/clip_coastal_rasters.py`: utility to preprocess Aqueduct coastal rasters into a project-consistent folder structure.
+- `scripts/inspect_scores.py` and `scripts/inspect_risk_score_content.py`: lightweight developer diagnostics for score outputs and scoring-source references.
+
+These scripts are primarily exploratory, preprocessing, or developer utilities and are not required for the nominal scoring pipeline unless you need the corresponding feature (coastal RPs, fitted rainfall RPs, etc.).
+
+## How to run the core pipeline (recommended order)
+
+1. Create and activate a Python environment and install requirements:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+2. Prepare secrets and Earth Engine credentials in `.env` (see `scripts/pull_hazard_data.py` for required keys, e.g. `EE_PROJECT_ID`).
+
+3. Partition claims for honest validation:
+
+```powershell
+python scripts/split_claims_by_date.py
+```
+
+4. (Operator) Run Earth Engine hazard export. For small tests use test mode; for full export run Drive export and download the resulting CSV to `outputs/hazard_export.csv`:
+
+```powershell
+python scripts/pull_hazard_data.py  # set TEST_MODE=True for a small local extract
+# For production: run the EE export task, download Drive CSV to outputs/hazard_export.csv
+```
+
+5. Enrich the EE extract with city/province labels:
+
+```powershell
+python scripts/merge_locations.py
+```
+
+6. Produce an initial scored portfolio (no claims features yet):
+
+```powershell
+python scripts/risk_score.py
+```
+
+7. Build claims-derived features from historical matches (requires `outputs/claims_matched_history.csv`):
+
+```powershell
+python scripts/build_claims_features.py
+```
+
+8. Re-run scoring to incorporate claims features and produce the final `outputs/sites_scored.csv`:
+
+```powershell
+python scripts/risk_score.py
+```
+
+9. Run historical and holdout validation:
+
+```powershell
+python scripts/validate_against_claims.py
+python scripts/validate_holdout_2024.py
+```
+
+10. Launch the interactive dashboard (reads `outputs/sites_scored.csv`):
+
+```powershell
+streamlit run scripts/dashboard.py
+```
+
+## Quick notes and operational reminders
+
+## Methodology Page — Business-facing overview
+
+Purpose: The dashboard now includes a dedicated, non-technical "How is Flood Risk Calculated?" page intended for IGI Insurance stakeholders. It explains the data sources, the high-level assessment flow, the meaning of risk tiers and return periods, and key limitations — without exposing implementation-level details.
+
+Contents (user-facing):
+- Hero and short information banner advising that results are decision-support and should be used alongside underwriting judgement.
+- Simple flow diagram: Insured locations → Hazard & environmental data → River and rainfall assessment → Historical flood & claims evidence → Final risk classification.
+- Data source cards summarising: River Flood Hazard (JRC/Copernicus), Rainfall Exposure (CHIRPS), Terrain & Topography (MERIT Hydro), Historical Flooding (Global Flood Database / MODIS), Claims History (IGI internal), Coastal Flooding (Aqueduct / GTSR).
+- Two main flood-risk cards distinguishing Riverine (river/stream overflow) and Pluvial (rainfall & surface flooding) assessments and their business interpretation.
+- "From Hazard to Risk" four-step explanation of how hazards, vulnerability and evidence are combined to assign a risk tier.
+- Clear, business-oriented descriptions for the four risk tiers (Critical, High, Medium, Low) and their implications for underwriting and portfolio management.
+- A dedicated section explaining return periods in simple language, with separate subsections for river, rainfall and coastal scenarios and an explicit FAQ clarifying that return periods are display-only and do NOT determine the final risk tier.
+- Data sources table and an expandable "Important limitations" panel highlighting data, resolution and interpretation caveats.
+- A collapsed "Technical Methodology" expander for optional readers that summarises the assessment approach (riverine vs pluvial separation, evidence sources, and data-process separation) but deliberately omits raw code, formulae or threshold constants.
+
+Design and governance notes:
+- The page is arranged for executive readability (hero → flow → data → tiers → return periods → limitations → optional technical details).
+- Language is intentionally non-technical and avoids exposure of percentile thresholds, code, or raw formulas; technical specifics remain in the codebase and are accessible to developers separately.
+- The Methodology page is accessible from the Executive Summary via a prominent card/button and from the sidebar as "Methodology".
+- Earth Engine exports are asynchronous for full runs: the repo expects the operator to download the finished Drive CSV and place it at `outputs/hazard_export.csv` before running `merge_locations.py`.
+- Some utilities (coastal RP sampling, GEV rainfall fitting, OSM drainage checks) require optional packages (`rasterio`, `geopandas`, `osmnx`) not listed in `requirements.txt`.
+- `normalize_headers.py` rewrites CSVs in place and creates a `.orig` backup; use it deliberately and not as a blind preprocessing step in automated pipelines.
+- Human review is required for fanned claim suggestions: `fanned_claims_suggestions.csv` must be reconciled into `manual_fanned_claim_resolutions.csv` before feature construction trusts the mappings.
+
